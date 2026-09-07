@@ -19,6 +19,7 @@ import (
 
 type Config struct{ DataDir, WebDir, MediaRoot string }
 type App struct {
+	syncWait     func(context.Context, time.Duration) error
 	syncCancel   context.CancelFunc
 	syncRunID    int64
 	db           *sql.DB

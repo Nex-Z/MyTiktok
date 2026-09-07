@@ -37,7 +37,10 @@ func (t contextTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 func cloudClient(ctx context.Context, cookie string) *sdk.Pan115Client {
-	c := sdk.New(sdk.WithClient(&http.Client{Timeout: 30 * time.Second, Transport: contextTransport{ctx, http.DefaultTransport}}), sdk.UA(sdk.UA115Browser))
+	return cloudClientTransport(cookie, contextTransport{ctx, http.DefaultTransport})
+}
+func cloudClientTransport(cookie string, transport http.RoundTripper) *sdk.Pan115Client {
+	c := sdk.New(sdk.WithClient(&http.Client{Timeout: 30 * time.Second, Transport: transport}), sdk.UA(sdk.UA115Browser))
 	if cookie != "" {
 		cr := &sdk.Credential{}
 		_ = cr.FromCookie(cookie)
@@ -72,17 +75,20 @@ func cloudError(err error) error {
 }
 
 type P115 struct {
-	cookie    string
-	gate      chan struct{}
-	mu        sync.Mutex
-	last      time.Time
-	coolUntil time.Time
-	cache     map[string]Playback
-	interval  time.Duration
+	requestGate chan struct{}
+	requestLast time.Time
+	requestCool time.Time
+	cookie      string
+	gate        chan struct{}
+	mu          sync.Mutex
+	last        time.Time
+	coolUntil   time.Time
+	cache       map[string]Playback
+	interval    time.Duration
 }
 
 func newP115(cookie string) *P115 {
-	return &P115{cookie: cookie, gate: make(chan struct{}, 1), cache: map[string]Playback{}, interval: 2 * time.Second}
+	return &P115{cookie: cookie, gate: make(chan struct{}, 1), requestGate: make(chan struct{}, 1), cache: map[string]Playback{}, interval: 2 * time.Second}
 }
 func (p *P115) List(ctx context.Context, key, cursor string) (Page, error) {
 	select {
@@ -101,7 +107,7 @@ func (p *P115) List(ctx context.Context, key, cursor string) (Page, error) {
 		}
 	}
 	p.last = time.Now()
-	c := cloudClient(ctx, p.cookie)
+	c := p.client(ctx)
 	offset := int64(intParam(cursor, 0))
 	opts := sdk.DefaultListOptions()
 	result, err := sdk.GetFiles(c.NewRequest().SetContext(ctx).ForceContentType("application/json;charset=UTF-8"), key, sdk.WithApiURL(opts.ApiURLs[0]), sdk.WithLimit(256), sdk.WithOffset(offset))
@@ -130,7 +136,7 @@ func (p *P115) List(ctx context.Context, key, cursor string) (Page, error) {
 	return out, nil
 }
 func (p *P115) Stat(ctx context.Context, key string) (Entry, error) {
-	f, err := cloudClient(ctx, p.cookie).GetFile(key)
+	f, err := p.client(ctx).GetFile(key)
 	if err != nil {
 		return Entry{}, cloudError(err)
 	}
@@ -147,7 +153,7 @@ func (p *P115) ResolvePlayback(ctx context.Context, key, ua string, refresh bool
 	if ok && !refresh && time.Now().Before(v.Expires) {
 		return v, nil
 	}
-	c := cloudClient(ctx, p.cookie)
+	c := p.client(ctx)
 	f, err := c.GetFile(key)
 	if err != nil {
 		return Playback{}, cloudError(err)

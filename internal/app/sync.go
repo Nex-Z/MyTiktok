@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS sync_tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,name 
 CREATE TABLE IF NOT EXISTS sync_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,task_id INTEGER NOT NULL REFERENCES sync_tasks(id) ON DELETE CASCADE,status TEXT NOT NULL,uploaded INTEGER NOT NULL DEFAULT 0,skipped INTEGER NOT NULL DEFAULT 0,failed INTEGER NOT NULL DEFAULT 0,current_file TEXT NOT NULL DEFAULT '',message TEXT NOT NULL DEFAULT '',started_at INTEGER NOT NULL,finished_at INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS sync_records(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,path TEXT NOT NULL,status TEXT NOT NULL,message TEXT NOT NULL,size INTEGER NOT NULL,created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS sync_records_run ON sync_records(run_id,id);
+UPDATE sync_runs SET failed=failed+(SELECT count(*) FROM sync_records WHERE run_id=sync_runs.id AND status='uploading');
+UPDATE sync_records SET status='unconfirmed',message='服务重启时上传尚未确认；请重新核对并继续' WHERE status='uploading';
 UPDATE sync_runs SET status='interrupted',message='服务重启；已上传的文件保留，下次按同名规则跳过',finished_at=unixepoch() WHERE status IN ('running','cooling','queued');
 `
 
@@ -222,7 +224,7 @@ func (a *App) startSync(id int64) (int64, error) {
 			status, msg = "partial", "部分文件失败，可重新执行"
 		}
 		if e != nil {
-			status, msg = "failed", "同步失败，请检查本地目录或 115 连接"
+			status, msg = "failed", "同步已暂停：重试未成功，请查看明细后重新核对并继续"
 			if errors.Is(e, errAuth) {
 				msg = errAuth.Error()
 			}
@@ -244,9 +246,21 @@ func (a *App) syncRecord(run int64, path, status, msg string, size int64) error 
 		return e
 	}
 	defer tx.Rollback()
-	_, e = tx.Exec(`INSERT INTO sync_records(run_id,path,status,message,size,created_at) VALUES(?,?,?,?,?,unixepoch())`, run, path, status, msg, size)
+	var pending int64
+	e = tx.QueryRow(`SELECT id FROM sync_records WHERE run_id=? AND path=? AND status='uploading' ORDER BY id DESC LIMIT 1`, run, path).Scan(&pending)
+	if e != nil && e != sql.ErrNoRows {
+		return e
+	}
+	if pending != 0 && status != "uploading" {
+		_, e = tx.Exec(`UPDATE sync_records SET status=?,message=?,size=?,created_at=unixepoch() WHERE id=?`, status, msg, size, pending)
+	} else {
+		_, e = tx.Exec(`INSERT INTO sync_records(run_id,path,status,message,size,created_at) VALUES(?,?,?,?,?,unixepoch())`, run, path, status, msg, size)
+	}
 	if e != nil {
 		return e
+	}
+	if status == "uploading" {
+		return tx.Commit()
 	}
 	col := "failed"
 	if status == "uploaded" {
@@ -271,15 +285,7 @@ func (a *App) copyTree(ctx context.Context, root, target string, run int64, p sy
 		names := map[string]Entry{}
 		cursor := ""
 		for {
-			page, e := p.List(ctx, d.cloud, cursor)
-			if errors.Is(e, errRate) {
-				_, _ = a.db.Exec(`UPDATE sync_runs SET status='cooling',message='115 限流，冷却 10 分钟' WHERE id=?`, run)
-				if e = sleep(ctx, 10*time.Minute); e != nil {
-					return e
-				}
-				_, _ = a.db.Exec(`UPDATE sync_runs SET status='running',message='' WHERE id=?`, run)
-				continue
-			}
+			page, e := a.syncList(ctx, p, d.cloud, cursor, run)
 			if e != nil {
 				return e
 			}
@@ -313,8 +319,11 @@ func (a *App) copyTree(ctx context.Context, root, target string, run int64, p sy
 					}
 					cid := existing.Key
 					if !exists {
-						cid, e = p.Mkdir(ctx, d.cloud, entry.Name)
+						cid, e = a.syncMkdir(ctx, p, d.cloud, entry.Name, run)
 						if e != nil {
+							if re := a.syncRecord(run, entry.Key, "failed", "目录创建未确认；重新执行时核对", 0); re != nil {
+								return re
+							}
 							return e
 						}
 						names[entry.Name] = Entry{Key: cid, Name: entry.Name, Dir: true}
@@ -351,26 +360,28 @@ func (a *App) copyTree(ctx context.Context, root, target string, run int64, p sy
 					f.Close()
 					return errors.New("not regular file")
 				}
-				uploadCtx, cancel := context.WithTimeout(ctx, 6*time.Hour)
-				e = p.Upload(uploadCtx, d.cloud, entry.Name, f)
-				cancel()
-				f.Close()
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				if e != nil {
-					if re := a.syncRecord(run, entry.Key, "failed", "上传未确认成功，请重试", entry.Size); re != nil {
-						return re
-					}
-					if errors.Is(e, errAuth) || errors.Is(e, errRate) {
-						return e
-					}
-					continue
-				}
-				names[entry.Name] = entry
-				if e = a.syncRecord(run, entry.Key, "uploaded", "上传成功", entry.Size); e != nil {
+				if e = a.syncRecord(run, entry.Key, "uploading", "排队上传，结果尚未确认", entry.Size); e != nil {
+					f.Close()
 					return e
 				}
+				if e = a.syncPause(ctx, run, 3*time.Second, "文件间隔 3 秒，串行上传"); e != nil {
+					f.Close()
+					if re := a.syncRecord(run, entry.Key, "unconfirmed", "已取消，可重新核对并继续", entry.Size); re != nil {
+						return re
+					}
+					return e
+				}
+				status, message, uploadErr := a.syncUpload(ctx, p, d.cloud, entry, f, run)
+				f.Close()
+				if e = a.syncRecord(run, entry.Key, status, message, entry.Size); e != nil {
+					return e
+				}
+				if uploadErr != nil {
+					// Stop after exhausting a file's attempts rather than hammering the next 499.
+					return uploadErr
+				}
+				names[entry.Name] = entry
+
 			}
 			if page.Next == "" {
 				break

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeSync struct {
@@ -50,6 +51,7 @@ func (f *fakeSync) Upload(ctx context.Context, parent, name string, file *os.Fil
 }
 func syncFixture(t *testing.T) (*App, string) {
 	a := testApp(t)
+	a.syncWait = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	s := seedSource(t, a)
 	mustExec(t, a, `INSERT INTO sync_tasks(id,name,source_id,target,interval_hours,enabled) VALUES(1,'test',1,'0',6,0)`)
 	mustExec(t, a, `INSERT INTO sync_runs(id,task_id,status,started_at) VALUES(1,1,'running',1)`)
@@ -103,8 +105,8 @@ func TestSyncFailureAndCancellationDoNotUpload(t *testing.T) {
 		t.Fatal(e)
 	}
 	p.failUpload = true
-	if e := a.copyTree(context.Background(), root, "0", 1, p); e != nil {
-		t.Fatal(e)
+	if e := a.copyTree(context.Background(), root, "0", 1, p); e == nil {
+		t.Fatal("expected exhausted retries to stop run")
 	}
 	var failed int
 	a.db.QueryRow(`SELECT failed FROM sync_runs WHERE id=1`).Scan(&failed)

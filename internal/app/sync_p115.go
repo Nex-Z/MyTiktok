@@ -40,11 +40,11 @@ func (p *P115) Mkdir(ctx context.Context, parent, name string) (string, error) {
 		return "", e
 	}
 	p.last = time.Now()
-	id, e := cloudClient(ctx, p.cookie).Mkdir(parent, name)
+	id, e := p.client(ctx).Mkdir(parent, name)
 	return id, cloudError(e)
 }
 func (p *P115) Upload(ctx context.Context, parent, name string, f *os.File) error {
-	c := cloudClient(ctx, p.cookie)
+	c := p.client(ctx)
 	before, e := f.Stat()
 	if e != nil {
 		return e

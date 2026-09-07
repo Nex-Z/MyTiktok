@@ -39,13 +39,15 @@ type RecordItem = {
 };
 const labels: Record<string, string> = {
   running: "同步中",
-  cooling: "限流冷却",
+  cooling: "等待重试 / 排队",
   completed: "已完成",
   partial: "部分失败",
   failed: "失败",
   canceled: "已取消",
   interrupted: "已中断",
   uploaded: "上传成功",
+  uploading: "上传中 / 排队",
+  unconfirmed: "结果待核对",
   skipped: "同名跳过",
 };
 export default function Sync({
@@ -120,7 +122,7 @@ export default function Sync({
         </button>
       </header>
       <p className="sync-rule">
-        保留目录结构和本地文件，云端同一目录的同名项自动跳过。
+        串行上传，文件间隔 3 秒；失败最多尝试 3 次，限流冷却 10 分钟。同名项跳过，保留目录结构和本地文件。
       </p>
       {error && <p className="error-banner">{error}</p>}
       <div className="sync-tasks">
@@ -194,7 +196,7 @@ export default function Sync({
               <small>{dateLabel(r.startedAt)}</small>
             </div>
             <p>
-              成功 {r.uploaded} · 跳过 {r.skipped} · 失败 {r.failed}
+              成功 {r.uploaded} · 跳过 {r.skipped} · 失败 / 待核对 {r.failed}
             </p>
             {r.currentFile && (
               <p className="sync-current">正在处理：{r.currentFile}</p>
@@ -207,6 +209,12 @@ export default function Sync({
               >
                 查看明细
               </button>
+              {["failed", "partial", "canceled", "interrupted"].includes(r.status) && (
+                <button className="primary" disabled={busy || runs.some(v => ["running", "cooling"].includes(v.status))}
+                  onClick={() => void action(`/sync/tasks/${r.taskId}/run`)}>
+                  重新核对并继续
+                </button>
+              )}
               {["running", "cooling"].includes(r.status) && (
                 <button
                   className="secondary"
@@ -256,6 +264,7 @@ export default function Sync({
                 <X />
               </button>
             </header>
+            <p className="sync-rule">成功为已确认结果；同名跳过不代表内容相同。失败或待核对可返回运行记录，点击“重新核对并继续”；新一轮会核对已有项并处理剩余文件。</p>
             <div className="sync-records">
               {records.map((r) => (
                 <div key={r.id}>
@@ -268,7 +277,7 @@ export default function Sync({
                   </small>
                 </div>
               ))}
-              {!records.length && <p>暂无已完成的文件记录</p>}
+              {!records.length && <p>暂无文件记录；目录读取失败时请查看运行状态</p>}
             </div>
             <footer>
               <button
