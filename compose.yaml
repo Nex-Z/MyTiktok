@@ -1,0 +1,14 @@
+services:
+  mytiktok:
+    build: .
+    image: mytiktok:local
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${PORT:-8080}:8080"
+    environment:
+      TZ: Asia/Hong_Kong
+      MEDIA_ROOT: /media
+    volumes:
+      - ./data:/data
+      - ${MEDIA_PATH:-./media}:/media:ro
+    stop_grace_period: 30s
