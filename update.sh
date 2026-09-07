@@ -12,9 +12,17 @@ STAGING=$(mktemp -d "$DEPLOY_DIR/.update.XXXXXX")
 trap 'rm -f "$STAGING/image.tar.gz" "$STAGING/checksum" "$STAGING/compose.release.yaml"; rmdir "$STAGING" 2>/dev/null || true' EXIT
 BASE=https://github.com/Nex-Z/MyTiktok/releases/latest/download
 ASSET="mytiktok-linux-$ARCH.tar.gz"
-curl -fL --retry 3 "$BASE/$ASSET" -o "$STAGING/image.tar.gz"
-curl -fL --retry 3 "$BASE/$ASSET.sha256" -o "$STAGING/checksum"
-curl -fL --retry 3 "$BASE/compose.release.yaml" -o "$STAGING/compose.release.yaml"
+DOWNLOAD_PROXY=${DOWNLOAD_PROXY:-$(sed -n 's/^DOWNLOAD_PROXY=//p' .env | head -n 1 | tr -d '\r')}
+download() {
+  if [ -n "$DOWNLOAD_PROXY" ]; then
+    curl --proxy "$DOWNLOAD_PROXY" -fL --connect-timeout 20 --retry 3 "$1" -o "$2"
+  else
+    curl -fL --connect-timeout 20 --retry 3 "$1" -o "$2"
+  fi
+}
+download "$BASE/$ASSET" "$STAGING/image.tar.gz"
+download "$BASE/$ASSET.sha256" "$STAGING/checksum"
+download "$BASE/compose.release.yaml" "$STAGING/compose.release.yaml"
 EXPECTED=$(awk '{print $1}' "$STAGING/checksum")
 ACTUAL=$(sha256sum "$STAGING/image.tar.gz" | awk '{print $1}')
 [ "$EXPECTED" = "$ACTUAL" ] || { printf 'Checksum mismatch\n' >&2; exit 1; }
