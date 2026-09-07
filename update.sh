@@ -26,6 +26,6 @@ umask 077
 ARCHIVE="backups/pre-update-$(date +%Y%m%d-%H%M%S).tar.gz"
 if ! tar -czf "$ARCHIVE" data .env compose.release.yaml; then docker compose -f compose.release.yaml start mytiktok; exit 1; fi
 cp "$STAGING/compose.release.yaml" compose.release.yaml
-docker compose -f compose.release.yaml up -d --no-build --pull never
+docker compose -f compose.release.yaml up -d --no-build --pull never --wait --wait-timeout 90
 docker compose -f compose.release.yaml ps
 printf '\nUpdated. Backup: %s\n' "$ARCHIVE"

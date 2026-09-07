@@ -72,6 +72,7 @@ export default function useMediaZoom() {
   };
   const end = (e: TouchEvent) => {
     const used = consuming.current;
+    if (!used) return false;
     if (e.touches.length === 0) {
       gesture.current = null;
       consuming.current = false;

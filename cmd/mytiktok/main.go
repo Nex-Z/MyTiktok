@@ -18,6 +18,18 @@ func env(k, d string) string {
 	return d
 }
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+		client := &http.Client{Timeout: 3 * time.Second}
+		r, e := client.Get("http://127.0.0.1:8080/api/health")
+		if e != nil {
+			os.Exit(1)
+		}
+		r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		return
+	}
 	a, err := app.New(app.Config{DataDir: env("DATA_DIR", "data"), WebDir: env("WEB_DIR", "web/dist"), MediaRoot: env("MEDIA_ROOT", "/media")})
 	if err != nil {
 		log.Fatal(err)
