@@ -51,7 +51,7 @@ func openDB(dir string) (*sql.DB, error) {
 		return nil, err
 	}
 	var version int
-	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version < 1 || version > 2 {
+	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version < 1 || version > 3 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported database schema version %d", version)
 	}
@@ -60,9 +60,31 @@ func openDB(dir string) (*sql.DB, error) {
 			db.Close()
 			return nil, err
 		}
+		version = 2
+	}
+	if version == 2 {
+		if err = migratePlaybackKeys(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	_, err = db.Exec(`UPDATE jobs SET status='interrupted',message='服务重启，任务已中断',finished_at=unixepoch() WHERE status IN ('running','cooling','queued')`)
 	return db, err
+}
+
+func migratePlaybackKeys(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`ALTER TABLE videos ADD COLUMN playback_key TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE schema_version SET version=3`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func migrateFolders(db *sql.DB) error {

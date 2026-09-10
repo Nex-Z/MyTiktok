@@ -120,7 +120,7 @@ test("local library: scan, play, favorite, history, hide and restore", async ({
   for (const s of sources) await request.delete(`/api/sources/${s.id}`);
 });
 
-test("115 player retries direct URL then falls back to NAS proxy", async ({
+test("115 player falls back directly to NAS proxy", async ({
   page,
 }) => {
   const attempts: string[] = [];
@@ -152,7 +152,7 @@ test("115 player retries direct URL then falls back to NAS proxy", async ({
   await expect(
     page.getByText("暂时无法播放。请检查媒体源连接或视频编码。"),
   ).toBeVisible();
-  expect(attempts.some((v) => v.includes("refresh=1"))).toBe(true);
+  expect(attempts.some((v) => v.includes("refresh=1"))).toBe(false);
   expect(attempts.some((v) => v.includes("proxy=1"))).toBe(true);
-  expect(attempts.length).toBeLessThanOrEqual(4);
+  expect(attempts.length).toBeLessThanOrEqual(3);
 });

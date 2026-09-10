@@ -41,23 +41,69 @@ func publicDial(ctx context.Context, network, address string) (net.Conn, error) 
 	}
 	return nil, last
 }
-func mediaHTTP() *http.Client {
-	return &http.Client{Transport: &http.Transport{DialContext: publicDial, ResponseHeaderTimeout: 20 * time.Second, TLSHandshakeTimeout: 10 * time.Second, DisableKeepAlives: true}, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) > 5 {
-			return errors.New("too many redirects")
-		}
-		if req.URL.Scheme != "https" && req.URL.Scheme != "http" {
-			return errors.New("invalid upstream")
-		}
-		return nil
-	}}
+
+var mediaTransport = &http.Transport{
+	DialContext:           publicDial,
+	ResponseHeaderTimeout: 20 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          100,
+	MaxIdleConnsPerHost:   16,
+	IdleConnTimeout:       90 * time.Second,
 }
+
+var sharedMediaHTTP = &http.Client{Transport: mediaTransport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	if len(via) > 5 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Scheme != "https" && req.URL.Scheme != "http" {
+		return errors.New("invalid upstream")
+	}
+	return nil
+}}
+
+func mediaHTTP() *http.Client {
+	return sharedMediaHTTP
+}
+
+func (a *App) preparePlayback(w http.ResponseWriter, r *http.Request) {
+	var sourceID int64
+	var key, playbackKey, kind string
+	var available, hidden bool
+	e := a.db.QueryRow(`SELECT v.source_id,v.file_key,v.playback_key,s.kind,v.available,v.hidden FROM videos v JOIN sources s ON s.id=v.source_id WHERE v.id=?`, pathID(r)).Scan(&sourceID, &key, &playbackKey, &kind, &available, &hidden)
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	if !available || hidden {
+		writeError(w, 404, "unavailable", "视频已隐藏或不可用")
+		return
+	}
+	if kind == "p115" {
+		s, e := a.source(sourceID)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		d, e := a.driver(s)
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		if _, e = d.ResolvePlayback(r.Context(), key, playbackKey, r.UserAgent(), false); e != nil {
+			fail(w, e)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (a *App) play(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	var sourceID int64
-	var key string
+	var key, playbackKey string
 	var available, hidden bool
-	e := a.db.QueryRow(`SELECT source_id,file_key,available,hidden FROM videos WHERE id=?`, id).Scan(&sourceID, &key, &available, &hidden)
+	e := a.db.QueryRow(`SELECT source_id,file_key,playback_key,available,hidden FROM videos WHERE id=?`, id).Scan(&sourceID, &key, &playbackKey, &available, &hidden)
 	if e != nil {
 		fail(w, e)
 		return
@@ -76,7 +122,7 @@ func (a *App) play(w http.ResponseWriter, r *http.Request) {
 		fail(w, e)
 		return
 	}
-	v, e := d.ResolvePlayback(r.Context(), key, r.UserAgent(), r.URL.Query().Get("refresh") == "1")
+	v, e := d.ResolvePlayback(r.Context(), key, playbackKey, r.UserAgent(), r.URL.Query().Get("refresh") == "1")
 	if e != nil {
 		fail(w, e)
 		return
@@ -130,7 +176,7 @@ func (a *App) play(w http.ResponseWriter, r *http.Request) {
 		}
 		if attempt == 0 && (resp.StatusCode == 401 || resp.StatusCode == 403) {
 			resp.Body.Close()
-			v, e = d.ResolvePlayback(r.Context(), key, r.UserAgent(), true)
+			v, e = d.ResolvePlayback(r.Context(), key, playbackKey, r.UserAgent(), true)
 			if e != nil {
 				fail(w, e)
 				return

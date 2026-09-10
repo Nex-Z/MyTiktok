@@ -43,7 +43,7 @@ func TestP115PaginationAndCredentialIsolation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if page.Next != "1" || page.Entries[0].Key != "1" {
+	if page.Next != "1" || page.Entries[0].Key != "1" || page.Entries[0].PlaybackKey != "pick1" {
 		t.Fatalf("bad first page %+v", page)
 	}
 	page, e = p.List(context.Background(), "0", page.Next)
@@ -111,16 +111,32 @@ func TestP115PlaybackCacheExpiryAndRefresh(t *testing.T) {
 	mockCloud(t, func(r *http.Request) string { return `{"state":false,"errno":99}` })
 	p := newP115("")
 	p.cache["1\nBrowser"] = Playback{URL: "https://example.invalid/signed", Expires: time.Now().Add(time.Minute)}
-	v, err := p.ResolvePlayback(context.Background(), "1", "Browser", false)
+	v, err := p.ResolvePlayback(context.Background(), "1", "", "Browser", false)
 	if err != nil || v.URL == "" {
 		t.Fatalf("cache miss: %v", err)
 	}
-	if _, err = p.ResolvePlayback(context.Background(), "1", "Browser", true); !errors.Is(err, errAuth) {
+	if _, err = p.ResolvePlayback(context.Background(), "1", "", "Browser", true); !errors.Is(err, errAuth) {
 		t.Fatalf("refresh did not resolve upstream: %v", err)
 	}
 	p.cache["1\nBrowser"] = Playback{URL: "https://example.invalid/expired", Expires: time.Now().Add(-time.Minute)}
-	if _, err = p.ResolvePlayback(context.Background(), "1", "Browser", false); !errors.Is(err, errAuth) {
+	if _, err = p.ResolvePlayback(context.Background(), "1", "", "Browser", false); !errors.Is(err, errAuth) {
 		t.Fatalf("expired URL reused: %v", err)
+	}
+}
+
+func TestP115PlaybackKeySkipsFileLookup(t *testing.T) {
+	requests := 0
+	mockCloud(t, func(r *http.Request) string {
+		requests++
+		if strings.Contains(r.URL.Path, "get_info") {
+			t.Fatal("playback key unexpectedly performed file lookup")
+		}
+		return `{"state":false,"errno":99}`
+	})
+	p := newP115("")
+	_, _ = p.ResolvePlayback(context.Background(), "1", "pick1", "Browser", false)
+	if requests != 1 {
+		t.Fatalf("expected one download URL request, got %d", requests)
 	}
 }
 

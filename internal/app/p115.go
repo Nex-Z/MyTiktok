@@ -84,11 +84,19 @@ type P115 struct {
 	last        time.Time
 	coolUntil   time.Time
 	cache       map[string]Playback
+	pickcodes   map[string]string
+	inflight    map[string]*playbackCall
 	interval    time.Duration
 }
 
+type playbackCall struct {
+	done chan struct{}
+	v    Playback
+	err  error
+}
+
 func newP115(cookie string) *P115 {
-	return &P115{cookie: cookie, gate: make(chan struct{}, 1), requestGate: make(chan struct{}, 1), cache: map[string]Playback{}, interval: 2 * time.Second}
+	return &P115{cookie: cookie, gate: make(chan struct{}, 1), requestGate: make(chan struct{}, 1), cache: map[string]Playback{}, pickcodes: map[string]string{}, inflight: map[string]*playbackCall{}, interval: 2 * time.Second}
 }
 func (p *P115) List(ctx context.Context, key, cursor string) (Page, error) {
 	select {
@@ -124,7 +132,12 @@ func (p *P115) List(ctx context.Context, key, cursor string) (Page, error) {
 	out := Page{Entries: []Entry{}}
 	for i := range result.Files {
 		f := (&sdk.File{}).From(&result.Files[i])
-		out.Entries = append(out.Entries, Entry{Key: f.FileID, Name: f.Name, Dir: f.IsDirectory, Size: f.Size, Modified: f.UpdateTime.Unix(), Thumb: f.ThumbURL})
+		if f.PickCode != "" {
+			p.mu.Lock()
+			p.pickcodes[f.FileID] = f.PickCode
+			p.mu.Unlock()
+		}
+		out.Entries = append(out.Entries, Entry{Key: f.FileID, PlaybackKey: f.PickCode, Name: f.Name, Dir: f.IsDirectory, Size: f.Size, Modified: f.UpdateTime.Unix(), Thumb: f.ThumbURL})
 	}
 	next := offset + int64(len(result.Files))
 	if next < int64(result.Count) {
@@ -145,23 +158,63 @@ func (p *P115) Stat(ctx context.Context, key string) (Entry, error) {
 	}
 	return Entry{Key: f.FileID, Name: f.Name, Dir: f.IsDirectory, Size: f.Size, Modified: f.UpdateTime.Unix(), Thumb: f.ThumbURL}, nil
 }
-func (p *P115) ResolvePlayback(ctx context.Context, key, ua string, refresh bool) (Playback, error) {
+func (p *P115) ResolvePlayback(ctx context.Context, key, playbackKey, ua string, refresh bool) (Playback, error) {
 	cacheKey := key + "\n" + ua
 	p.mu.Lock()
 	v, ok := p.cache[cacheKey]
-	p.mu.Unlock()
 	if ok && !refresh && time.Now().Before(v.Expires) {
+		p.mu.Unlock()
 		return v, nil
 	}
+	if call := p.inflight[cacheKey]; call != nil {
+		p.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.v, call.err
+		case <-ctx.Done():
+			return Playback{}, ctx.Err()
+		}
+	}
+	call := &playbackCall{done: make(chan struct{})}
+	p.inflight[cacheKey] = call
+	p.mu.Unlock()
+
+	v, err := p.resolvePlayback(ctx, key, playbackKey, ua)
+	p.mu.Lock()
+	if err == nil {
+		if len(p.cache) > 256 {
+			clear(p.cache)
+		}
+		p.cache[cacheKey] = v
+	}
+	call.v, call.err = v, err
+	delete(p.inflight, cacheKey)
+	close(call.done)
+	p.mu.Unlock()
+	return v, err
+}
+
+func (p *P115) resolvePlayback(ctx context.Context, key, playbackKey, ua string) (Playback, error) {
 	c := p.client(ctx)
-	f, err := c.GetFile(key)
-	if err != nil {
-		return Playback{}, cloudError(err)
+	if playbackKey == "" {
+		p.mu.Lock()
+		playbackKey = p.pickcodes[key]
+		p.mu.Unlock()
 	}
-	if f == nil {
-		return Playback{}, errCloud
+	if playbackKey == "" {
+		f, err := c.GetFile(key)
+		if err != nil {
+			return Playback{}, cloudError(err)
+		}
+		if f == nil || f.PickCode == "" {
+			return Playback{}, errCloud
+		}
+		playbackKey = f.PickCode
+		p.mu.Lock()
+		p.pickcodes[key] = playbackKey
+		p.mu.Unlock()
 	}
-	info, err := c.DownloadWithUA(f.PickCode, ua)
+	info, err := c.DownloadWithUA(playbackKey, ua)
 	if err != nil {
 		return Playback{}, cloudError(err)
 	}
@@ -180,14 +233,7 @@ func (p *P115) ResolvePlayback(ctx context.Context, key, ua string, refresh bool
 			headers.Add("Cookie", cookie.Name+"="+cookie.Value)
 		}
 	}
-	v = Playback{URL: info.Url.Url, Headers: headers, Expires: time.Now().Add(5 * time.Minute)}
-	p.mu.Lock()
-	if len(p.cache) > 256 {
-		clear(p.cache)
-	}
-	p.cache[cacheKey] = v
-	p.mu.Unlock()
-	return v, nil
+	return Playback{URL: info.Url.Url, Headers: headers, Expires: time.Now().Add(5 * time.Minute)}, nil
 }
 func sleep(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)

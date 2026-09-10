@@ -67,6 +67,10 @@ export default function Player({
     [isPlaying, setPlaying] = useState(false),
     [position, setPosition] = useState(0),
     [duration, setDuration] = useState(v?.duration || 0);
+  useEffect(() => {
+    if (!isPlaying || !nextVideo || nextVideo.kind !== "p115") return;
+    void fetch(`/api/videos/${nextVideo.id}/prepare`).catch(() => {});
+  }, [isPlaying, nextVideo?.id, nextVideo?.kind]);
   const shell = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false),
     [wide, setWide] = useState(false);
@@ -250,13 +254,13 @@ export default function Player({
       setFailure("视频编码不兼容或文件损坏，请切换下一条");
       return;
     }
-    if (v.kind === "p115" && stage < 2) {
-      setStage((s) => s + 1);
+    if (v.kind === "p115" && stage < 1) {
+      setStage(1);
       return;
     }
     setFailure("暂时无法播放。请检查媒体源连接或视频编码。");
   };
-  const src = `/api/videos/${v.id}/play?${stage === 1 ? "refresh=1" : stage === 2 ? "proxy=1" : ""}`;
+  const src = `/api/videos/${v.id}/play?${stage === 1 ? "proxy=1" : ""}`;
   return (
     <div
       ref={shell}
@@ -537,7 +541,9 @@ export default function Player({
             <ArrowDown />
           </button>
         </aside>
-        {nextVideo && nextVideo.mediaType !== "image" && (
+        {nextVideo &&
+          nextVideo.kind !== "p115" &&
+          nextVideo.mediaType !== "image" && (
           <video
             className="preload"
             muted

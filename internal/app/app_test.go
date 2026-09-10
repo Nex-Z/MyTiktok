@@ -192,6 +192,9 @@ func TestLocalRangeAndConfinement(t *testing.T) {
 	}
 }
 func TestProxyRangeHeaders(t *testing.T) {
+	if mediaHTTP() != mediaHTTP() || mediaTransport.DisableKeepAlives {
+		t.Fatal("media client does not reuse connections")
+	}
 	for _, status := range []int{200, 206, 416} {
 		w := httptest.NewRecorder()
 		resp := &http.Response{StatusCode: status, Header: http.Header{"Content-Range": {"bytes 2-4/10"}, "Accept-Ranges": {"bytes"}, "Set-Cookie": {"secret"}}, Body: io.NopCloser(strings.NewReader("234"))}
@@ -199,6 +202,16 @@ func TestProxyRangeHeaders(t *testing.T) {
 		if w.Code != status || w.Header().Get("Content-Range") == "" || w.Header().Get("Set-Cookie") != "" {
 			t.Fatal("bad proxy response")
 		}
+	}
+}
+
+func TestPrepareLocalPlaybackDoesNotReadMedia(t *testing.T) {
+	a := testApp(t)
+	seedSource(t, a)
+	mustExec(t, a, `INSERT INTO videos(source_id,file_key,title,size,modified,indexed_at) VALUES(1,'missing.mp4','missing',1,1,1)`)
+	w := request(t, a, "GET", "/api/videos/1/prepare", nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }
 func TestMutationAndRestart(t *testing.T) {

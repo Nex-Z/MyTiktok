@@ -124,7 +124,7 @@ func (a *App) scan(ctx context.Context, s Source, job int64) error {
 					tx.Rollback()
 					return e
 				}
-				result, e := tx.Exec(`INSERT INTO videos(source_id,file_key,title,size,modified,indexed_at,seen_job,folder) VALUES(?,?,?,?,?,unixepoch(),?,?) ON CONFLICT(source_id,file_key) DO UPDATE SET title=excluded.title,size=excluded.size,modified=excluded.modified,seen_job=excluded.seen_job,folder=excluded.folder,available=1`, s.ID, v.Key, v.Name, v.Size, v.Modified, job, current.folder)
+				result, e := tx.Exec(`INSERT INTO videos(source_id,file_key,playback_key,title,size,modified,indexed_at,seen_job,folder) VALUES(?,?,?,?,?,?,unixepoch(),?,?) ON CONFLICT(source_id,file_key) DO UPDATE SET playback_key=excluded.playback_key,title=excluded.title,size=excluded.size,modified=excluded.modified,seen_job=excluded.seen_job,folder=excluded.folder,available=1`, s.ID, v.Key, v.PlaybackKey, v.Name, v.Size, v.Modified, job, current.folder)
 				if e != nil {
 					tx.Rollback()
 					return e
@@ -186,7 +186,7 @@ func (a *App) metadata(ctx context.Context, d Storage, s Source, item metadataIt
 	if s.Kind == "p115" && !cloudCover {
 		cloudCover = a.downloadThumbnail(ctx, item.id, item.e.Thumb) == nil
 	}
-	stream, e := d.ResolvePlayback(ctx, item.e.Key, "MyTiktok/0.1", false)
+	stream, e := d.ResolvePlayback(ctx, item.e.Key, item.e.PlaybackKey, "MyTiktok/0.1", false)
 	if e != nil {
 		return e
 	}

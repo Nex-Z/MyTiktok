@@ -103,13 +103,13 @@ func TestFolderMigrationPreservesExistingLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	var folder string
+	var folder, playbackKey string
 	var hidden, version, fav int
 	var pos float64
-	if err = db.QueryRow(`SELECT folder,hidden,(SELECT version FROM schema_version),(SELECT count(*) FROM favorites),(SELECT position FROM history) FROM videos WHERE id=1`).Scan(&folder, &hidden, &version, &fav, &pos); err != nil {
+	if err = db.QueryRow(`SELECT folder,playback_key,hidden,(SELECT version FROM schema_version),(SELECT count(*) FROM favorites),(SELECT position FROM history) FROM videos WHERE id=1`).Scan(&folder, &playbackKey, &hidden, &version, &fav, &pos); err != nil {
 		t.Fatal(err)
 	}
-	if folder != "Trip/Day1" || hidden != 1 || version != 2 || fav != 1 || pos != 12 {
-		t.Fatal(folder, hidden, version, fav, pos)
+	if folder != "Trip/Day1" || playbackKey != "" || hidden != 1 || version != 3 || fav != 1 || pos != 12 {
+		t.Fatal(folder, playbackKey, hidden, version, fav, pos)
 	}
 }

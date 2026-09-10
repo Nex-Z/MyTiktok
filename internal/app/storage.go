@@ -12,12 +12,13 @@ import (
 )
 
 type Entry struct {
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	Dir      bool   `json:"dir"`
-	Size     int64  `json:"size"`
-	Modified int64  `json:"modified"`
-	Thumb    string `json:"-"`
+	Key         string `json:"key"`
+	PlaybackKey string `json:"-"`
+	Name        string `json:"name"`
+	Dir         bool   `json:"dir"`
+	Size        int64  `json:"size"`
+	Modified    int64  `json:"modified"`
+	Thumb       string `json:"-"`
 }
 type Page struct {
 	Entries []Entry `json:"entries"`
@@ -32,7 +33,7 @@ type Playback struct {
 type Storage interface {
 	List(context.Context, string, string) (Page, error)
 	Stat(context.Context, string) (Entry, error)
-	ResolvePlayback(context.Context, string, string, bool) (Playback, error)
+	ResolvePlayback(context.Context, string, string, string, bool) (Playback, error)
 }
 
 // safePath resolves symlinks before enforcing the configured root boundary.
@@ -118,7 +119,7 @@ func (l *Local) Stat(ctx context.Context, key string) (Entry, error) {
 	}
 	return Entry{Key: key, Name: i.Name(), Dir: i.IsDir(), Size: i.Size(), Modified: i.ModTime().UnixNano()}, ctx.Err()
 }
-func (l *Local) ResolvePlayback(ctx context.Context, key, ua string, refresh bool) (Playback, error) {
+func (l *Local) ResolvePlayback(ctx context.Context, key, playbackKey, ua string, refresh bool) (Playback, error) {
 	p, err := safePath(l.Root, key)
 	return Playback{Path: p}, err
 }

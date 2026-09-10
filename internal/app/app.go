@@ -150,6 +150,7 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("PUT /api/videos/{id}/history", a.history)
 	m.HandleFunc("PUT /api/videos/{id}/hidden", a.hidden)
 	m.HandleFunc("GET /api/videos/{id}/play", a.play)
+	m.HandleFunc("GET /api/videos/{id}/prepare", a.preparePlayback)
 	m.HandleFunc("GET /api/videos/{id}/cover", a.cover)
 	m.HandleFunc("POST /api/p115/qr", a.qrStart)
 	m.HandleFunc("GET /api/p115/qr/{id}", a.qrPoll)
