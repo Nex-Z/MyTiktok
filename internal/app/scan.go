@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,6 +20,10 @@ import (
 func (a *App) startScan(sourceID int64) (int64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.startScanLocked(sourceID)
+}
+
+func (a *App) startScanLocked(sourceID int64) (int64, error) {
 	if _, ok := a.running[sourceID]; ok {
 		return 0, errBusy
 	}
@@ -41,7 +46,7 @@ func (a *App) startScan(sourceID int64) (int64, error) {
 	go func() {
 		defer a.wg.Done()
 		defer cancel()
-		defer func() { a.mu.Lock(); delete(a.running, sourceID); a.mu.Unlock() }()
+		defer a.finishSourceJob(sourceID)
 		e := a.scan(ctx, s, id)
 		status, message := "completed", "扫描完成"
 		if e != nil {
@@ -59,6 +64,19 @@ func (a *App) startScan(sourceID int64) (int64, error) {
 		_, _ = a.db.Exec(`UPDATE jobs SET status=?,message=?,finished_at=unixepoch() WHERE id=?`, status, message, id)
 	}()
 	return id, nil
+}
+
+func (a *App) finishSourceJob(id int64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.running, id)
+	if a.pendingScan[id] {
+		delete(a.pendingScan, id)
+		_, err := a.startScanLocked(id)
+		if err != nil && a.ctx.Err() == nil {
+			log.Printf("start pending scan for source %d: %v", id, err)
+		}
+	}
 }
 
 type metadataItem struct {

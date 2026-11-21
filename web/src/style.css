@@ -1222,3 +1222,10 @@ option {
     margin-bottom: 12px;
   }
 }
+.media-dialog-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.upload-drop { display: grid; gap: .75rem; padding: 1rem; border: 1px dashed currentColor; border-radius: .75rem; cursor: pointer; }
+.upload-drop.dragging, .upload-drop:focus-within { outline: 2px solid currentColor; }
+.upload-drop input { max-width: 100%; min-width: 0; }
+.upload-progress { display: grid; grid-template-columns: 1fr auto; gap: .5rem; align-items: center; }
+.upload-progress span { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.upload-progress progress { width: 100%; }

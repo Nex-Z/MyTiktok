@@ -52,7 +52,7 @@ func (a *App) startMetadataRepair(sourceID int64) (int64, error) {
 	go func() {
 		defer a.wg.Done()
 		defer cancel()
-		defer func() { a.mu.Lock(); delete(a.running, sourceID); a.mu.Unlock() }()
+		defer a.finishSourceJob(sourceID)
 		count, failed := 0, 0
 		err := func() error {
 			rows, e := a.db.Query(`SELECT id,file_key,size FROM videos v WHERE source_id=? AND available=1 AND ((`+mediaTypeSQL()+`!='image' AND duration<=0) OR (`+mediaTypeSQL()+`!='audio' AND (width<=0 OR height<=0 OR cover=''))) ORDER BY id DESC`, sourceID)

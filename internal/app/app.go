@@ -28,6 +28,7 @@ type App struct {
 	cloud        *P115
 	qrs          map[string]*qrSession
 	feeds        map[string]*feedSession
+	pendingScan  map[int64]bool
 	running      map[int64]context.CancelFunc
 	wg           sync.WaitGroup
 	ctx          context.Context
@@ -45,7 +46,7 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &App{db: db, cfg: cfg, qrs: map[string]*qrSession{}, feeds: map[string]*feedSession{}, running: map[int64]context.CancelFunc{}, ctx: ctx, cancel: cancel, metadataGate: make(chan struct{}, 1)}
+	a := &App{db: db, cfg: cfg, qrs: map[string]*qrSession{}, feeds: map[string]*feedSession{}, pendingScan: make(map[int64]bool), running: map[int64]context.CancelFunc{}, ctx: ctx, cancel: cancel, metadataGate: make(chan struct{}, 1)}
 	var cookie string
 	_ = db.QueryRow(`SELECT value FROM settings WHERE key='p115_cookie'`).Scan(&cookie)
 	if cookie != "" {
@@ -123,6 +124,9 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /api/sources", a.createSource)
 	m.HandleFunc("PATCH /api/sources/{id}", a.updateSource)
 	m.HandleFunc("DELETE /api/sources/{id}", a.deleteSource)
+	m.HandleFunc("POST /api/local/directories", a.writeLocalMedia)
+	m.HandleFunc("POST /api/local/batch", a.writeLocalMedia)
+	m.HandleFunc("POST /api/local/files", a.writeLocalMedia)
 	m.HandleFunc("GET /api/directories", a.directories)
 	m.HandleFunc("POST /api/sources/{id}/scan", func(w http.ResponseWriter, r *http.Request) {
 		id, e := a.startScan(pathID(r))

@@ -1,3 +1,4 @@
+import UploadFields from "./UploadFields";
 import { useCallback, useEffect, useState } from "react";
 import {
   Cloud,
@@ -29,7 +30,7 @@ export default function Admin({ notify }: { notify: (s: string) => void }) {
   const [sources, setSources] = useState<Source[]>([]),
     [jobs, setJobs] = useState<Job[]>([]),
     [error, setError] = useState(""),
-    [adding, setAdding] = useState(false),
+    [adding, setAdding] = useState<"source" | "upload" | null>(null),
     [connected, setConnected] = useState(false),
     [checking, setChecking] = useState(false),
     [cookie, setCookie] = useState(""),
@@ -127,7 +128,7 @@ export default function Admin({ notify }: { notify: (s: string) => void }) {
           <div className="eyebrow">CONNECTED TO YOUR COLLECTION</div>
           <h1>媒体源</h1>
         </div>
-        <button className="primary" onClick={() => setAdding(true)}>
+        <button className="primary" onClick={() => setAdding("source")}>
           <Plus size={18} />
           添加媒体源
         </button>
@@ -147,13 +148,13 @@ export default function Admin({ notify }: { notify: (s: string) => void }) {
               </h2>
               <p>扫描选中的目录，视频会自动加入媒体库。</p>
             </div>
-            <span className="subtle">文件只读 · 索引同步</span>
+            <button className="secondary" onClick={() => setAdding("upload")}>上传音视频</button>
           </div>
           {sources.length === 0 ? (
             <div className="empty-source">
               <Folder size={28} />
               <span>还没有媒体源</span>
-              <button className="text-button" onClick={() => setAdding(true)}>
+              <button className="text-button" onClick={() => setAdding("source")}>
                 添加第一个目录 →
               </button>
             </div>
@@ -369,15 +370,16 @@ export default function Admin({ notify }: { notify: (s: string) => void }) {
           )}
         </section>
         <footer className="admin-footer">
-          MyTiktok / 私有部署 · 局域网免登录 · 本地文件只读
+          MyTiktok / 私有部署 · 局域网免登录
         </footer>
       </div>
       {adding && (
-        <AddSource
+        <MediaDialog
+          upload={adding === "upload"}
           connected={connected}
-          onClose={() => setAdding(false)}
+          onClose={() => setAdding(null)}
           onSaved={() => {
-            setAdding(false);
+            setAdding(null);
             void refresh();
             notify("媒体源已添加，正在首次扫描");
           }}
@@ -506,12 +508,14 @@ function SourceRow({
   );
 }
 
-function AddSource({
+function MediaDialog({
+  upload,
   connected,
   onClose,
   onSaved,
   notify,
 }: {
+  upload: boolean;
   connected: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -529,6 +533,7 @@ function AddSource({
     [loading, setLoading] = useState(false),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
+  const title = upload ? "上传音视频" : "添加媒体源";
   const key = stack[stack.length - 1].key;
   useEffect(() => {
     let stopped = false;
@@ -573,22 +578,23 @@ function AddSource({
     <div
       className="modal-backdrop"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!saving && e.target === e.currentTarget) onClose();
       }}
     >
       <section
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label="添加媒体源"
+        aria-label={title}
       >
         <div className="section-title">
-          <h2>添加媒体源</h2>
-          <button className="icon-button" onClick={onClose} aria-label="关闭">
+          <h2>{title}</h2>
+          <button className="icon-button" disabled={saving} onClick={onClose} aria-label="关闭">
             <X />
           </button>
         </div>
-        <div className="segmented">
+        <fieldset className="media-dialog-fields" disabled={saving}>
+        {!upload && <div className="segmented">
           <button
             className={kind === "local" ? "selected" : ""}
             onClick={() => changeKind("local")}
@@ -604,11 +610,12 @@ function AddSource({
             115 云盘
           </button>
         </div>
+        }
         {kind === "p115" && !connected ? (
           <p className="error-banner">请先关闭窗口并连接 115 账号。</p>
         ) : (
           <>
-            <label className="field">
+            {!upload && <label className="field">
               名称
               <input
                 placeholder="例如：旅行片段"
@@ -617,6 +624,7 @@ function AddSource({
                 maxLength={120}
               />
             </label>
+            }
             <div className="directory-browser">
               <header>
                 <button
@@ -674,6 +682,7 @@ function AddSource({
               <Check size={14} />
               选中当前目录：{root || "—"}
             </p>
+            {upload ? <UploadFields directory={key} ready={!!root && !loading} setSaving={setSaving} enter={name => setStack([...stack, {key: [key,name].filter(Boolean).join("/"), name}])} /> : <>
             <label className="field">
               扫描间隔（小时，0 表示关闭）
               <input
@@ -706,8 +715,10 @@ function AddSource({
             >
               {saving ? "正在添加" : "添加选中目录"}
             </button>
+            </>}
           </>
         )}
+        </fieldset>
       </section>
     </div>
   );
